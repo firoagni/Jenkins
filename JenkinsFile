@@ -1,0 +1,195 @@
+/**
+ * Jenkins Sample Pipeline
+ *
+ * Plugins Used in this pipeline:
+ * Blue Ocean - Jenkins' UI refresh
+ * Parameterized Scheduler Plugin - plugin to support setting parameters in the build cron schedule
+ * Email Extension Plugin - send enhanced notifications via email
+ * Environment Injector plugin - Inject environment variables to the pipeline externally
+ * HTML Publisher plugin - Publish static HTML reports
+ * Cucumber Reports - Publish Cucumber report
+ * 
+ * Note: Because of the Content Security Policy in Jenkins, if your reports are using external resources, 
+ * then the page will not function properly 
+ * (https://wiki.jenkins-ci.org/display/JENKINS/Configuring+Content+Security+Policy)
+ * To relax this rule, go to Manage Jenkins->Script console and type in the following command:
+ * System.setProperty("hudson.model.DirectoryBrowserSupport.CSP", "")
+ * Once done. clear browser cache and refresh 
+ * 
+ * Useful Links:
+ * Pipline Tutorial: https://jenkins.io/doc/book/pipeline/jenkinsfile/#working-with-the-environment
+ * Snippet Generator: https://jenkins.io/doc/book/pipeline/getting-started/#snippet-generator
+ * Post section of Jenkins: https://jenkins.io/doc/pipeline/tour/tests-and-artifacts/
+ * Pipeline Basic steps: https://jenkins.io/doc/pipeline/steps/workflow-basic-steps/
+ * Solution to continue execution when a step is failed: https://stackoverflow.com/questions/44022775/ignore-failure-in-pipeline-build-step
+ * Publish HTML reports: https://www.cloudbees.com/blog/publishing-html-reports-pipeline
+*/
+
+pipeline {
+	agent {
+       node {
+           label 'nightly-wntx64' //label where I wish to run this pipeline
+           customWorkspace 'D:\\nb\\' + env.BUILD_NUMBER
+       }
+    }
+	
+	environment {
+		name = "SRE"
+    }
+	
+	stages {
+		stage ('Prepare') {
+			steps {		
+
+				bat label: "Printing hello <name>", 
+					script: "echo hello ${name}"
+			
+				bat label: "Printing Env. variables", 
+					script: "SET"
+			
+				bat label: "Excuting a multiline script...",
+					script: """
+						echo hello
+						echo ${SRE}
+					"""
+				
+				bat label: "Creating a directory inside the workspace..", 
+					script: "mkdir ${WORKSPACE}\\test"
+				
+				dir("${WORKSPACE}\\test") {
+					bat label: "Creating a dummy file...",
+						script: "echo dummy > dummy.txt"
+				}
+				
+				script{
+			        bat label: "Creating a result file...",
+						script: "echo PASS > result.txt 2>&1"
+					echo "Parsing result.txt ..."
+			        FILECONTENT = readFile "createunit.log"
+			        if ( FILECONTENT.contains("ERROR:") || FILECONTENT.contains("Error:")){
+			            error "Found Error: string in the log! Failing the stage..." //error will fail the stage
+			        }
+			        else{
+			            echo "No error string is present in the log..."
+			        }
+			    }
+				
+				script{
+					String randomNumber = getRandomNumber().toString()
+					echo "Random number generated ${randomNumber}"
+				}
+				
+				sleep 30
+				
+			}
+			post{
+				success{
+					archiveArtifacts "test\\*.txt" //Archived files\folders are available from the Jenkins UI
+				}
+				failure{
+					echo "Sending mail to admins..."
+				}
+			}
+		}
+		
+		stage ('Load Source') {
+			steps {				
+				bat label: "Downloading source code", 
+					script: "echo downloading source code...."
+			}
+		}
+
+		stage ('Build') {
+			steps {				
+				bat label: "Building the code....", 
+					script: "echo Building the code........"
+			}
+		}
+		
+		stage('Unit Tests') {
+			failFast true
+			parallel{
+				stage ('Junit') {
+    				when {
+                        expression { return true } 
+                    }
+    				steps {
+    					bat label: "Running Junit tests",
+							script: "echo Running Junit tests..."
+    				}
+			    }
+
+				stage ('Jasmine') {
+    				when {
+                        expression { return true }
+                    }
+    				steps {
+    					bat label: "Running Jasmine tests",
+							script: "echo Running Junit tests..."
+    				}
+			    }
+			} //parallel block ends here
+		} //'Unit Tests' block ends here
+
+		stage ('Package') {
+			steps {				
+				bat label: "Generating artifact...", 
+					script: "echo Generating arifact > dummy_artifact.war"
+			}
+			post{
+				success{
+					archiveArtifacts "dummy_artifact.war" //Archived files\folders are available from the Jenkins UI
+				}
+			}
+		}
+		
+		stage('Parallel Exection block'){
+			parallel{
+				stage('Publish Artifact'){
+					steps {				
+						bat label: "Publishing artifact...", 
+							script: "Publishing artifact..."
+					}
+				}//'Publish Artifact' block ends here
+				
+				stage('Integration tests'){
+					stages{
+						stage('Deploy'){
+							steps {				
+								bat label: "Deploying artifact...", 
+									script: "Deploying artifact..."
+							}
+						} //'Deploy' block ends here
+						
+						stage('Cucumber'){
+							steps {				
+								bat label: "Running Cucumber tests...", 
+									script: "Running Cucumber tests..."
+							}
+						} //Cucumber block ends here
+						
+					} //stages block ends here
+				} //'Integration tests' block ends here
+				
+			}//parallel block ends here
+		}
+	}
+	post {
+        success {
+            echo "Build completed successfully. URL: ${RUN_DISPLAY_URL}"
+			echo "archiveArtifacts artifacts: 'build/libs/**/*.jar', fingerprint: true"
+        }
+        failure {
+            echo "Build failed. URL: ${RUN_DISPLAY_URL}"     
+        }
+		always{
+			echo "Always excute post build"
+		}
+	}	
+}
+
+// generate a random integer from 0 to 999
+def getRandomNumber(){
+    Random random = new Random()
+    return random.nextInt(1000)
+}
